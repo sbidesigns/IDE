@@ -1,0 +1,426 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { promises as fs } from 'fs';
+import path from 'path';
+import type { DevContext, MeetingNote, ExpertPersona, DebateContribution } from '@/types';
+import ZAI from 'z-ai-web-dev-sdk';
+
+const PROJECTS_DIR = path.join(process.cwd(), 'projects');
+
+// Expert personas for the debate gauntlet
+const EXPERT_ROLES: ExpertPersona[] = [
+  {
+    id: 'arch-1',
+    role: 'Chief Architect',
+    expertise: ['system-design', 'scalability', 'patterns'],
+    perspective: 'Long-term maintainability and architectural integrity',
+    biases: ['over-engineering', 'abstraction-heavy solutions']
+  },
+  {
+    id: 'sec-1',
+    role: 'Security Lead',
+    expertise: ['security', 'authentication', 'data-protection'],
+    perspective: 'Security-first approach, threat modeling',
+    biases: ['excessive security measures', 'paranoia about edge cases']
+  },
+  {
+    id: 'perf-1',
+    role: 'Performance Engineer',
+    expertise: ['optimization', 'caching', 'database-tuning'],
+    perspective: 'Speed and resource efficiency',
+    biases: ['premature optimization', 'complexity for marginal gains']
+  },
+  {
+    id: 'ux-1',
+    role: 'UX Lead',
+    expertise: ['user-experience', 'accessibility', 'interaction-design'],
+    perspective: 'User satisfaction and intuitive interfaces',
+    biases: ['feature-creep', 'over-polishing']
+  },
+  {
+    id: 'dev-1',
+    role: 'Senior Developer',
+    expertise: ['code-quality', 'testing', 'best-practices'],
+    perspective: 'Clean code and developer experience',
+    biases: ['dogmatic adherence to patterns', 'resistance to shortcuts']
+  },
+  {
+    id: 'prod-1',
+    role: 'Product Manager',
+    expertise: ['requirements', 'prioritization', 'market-analysis'],
+    perspective: 'Business value and user needs',
+    biases: ['feature-chasing', 'underestimating technical debt']
+  },
+  {
+    id: 'qa-1',
+    role: 'QA Lead',
+    expertise: ['testing', 'edge-cases', 'reliability'],
+    perspective: 'Quality assurance and bug prevention',
+    biases: ['excessive test coverage', 'blocking releases']
+  },
+  {
+    id: 'devops-1',
+    role: 'DevOps Engineer',
+    expertise: ['deployment', 'ci-cd', 'infrastructure'],
+    perspective: 'Deployment ease and operational stability',
+    biases: ['over-automation', 'infrastructure complexity']
+  }
+];
+
+async function ensureDir(dir: string) {
+  try {
+    await fs.mkdir(dir, { recursive: true });
+  } catch {
+    // Directory exists
+  }
+}
+
+async function loadContext(projectName: string): Promise<DevContext | null> {
+  try {
+    const contextPath = path.join(PROJECTS_DIR, projectName, '.context', 'state.json');
+    const data = await fs.readFile(contextPath, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+async function saveContext(projectName: string, context: DevContext) {
+  const contextDir = path.join(PROJECTS_DIR, projectName, '.context');
+  await ensureDir(contextDir);
+  const contextPath = path.join(contextDir, 'state.json');
+  await fs.writeFile(contextPath, JSON.stringify(context, null, 2));
+}
+
+async function saveMeetingNote(projectName: string, meeting: MeetingNote) {
+  const meetingsDir = path.join(PROJECTS_DIR, projectName, 'meetings');
+  await ensureDir(meetingsDir);
+  const meetingPath = path.join(meetingsDir, `meeting_${meeting.meetingNumber}.md`);
+  
+  // Convert meeting to markdown
+  const markdown = generateMeetingMarkdown(meeting);
+  await fs.writeFile(meetingPath, markdown);
+}
+
+function generateMeetingMarkdown(meeting: MeetingNote): string {
+  const date = new Date(meeting.createdAt).toLocaleString();
+  
+  let md = `# Meeting #${meeting.meetingNumber} - v${meeting.version}
+
+**Date:** ${date}  
+**Task Under Review:** ${meeting.taskUnderReview}  
+**Complexity:** ${meeting.estimatedComplexity.toUpperCase()}
+
+---
+
+## Experts Present
+
+${meeting.expertsPresent.map(e => `- **${e.role}** (${e.expertise.join(', ')})`).join('\n')}
+
+---
+
+## Debate Transcript
+
+`;
+
+  for (const contrib of meeting.debateTranscript) {
+    const typeIcon = {
+      proposal: '💡',
+      critique: '🔍',
+      refinement: '✨',
+      agreement: '✅',
+      concern: '⚠️'
+    }[contrib.contributionType];
+    
+    md += `### ${typeIcon} ${contrib.expertRole} (${contrib.contributionType})
+
+${contrib.content}
+
+`;
+    if (contrib.referencesOther) {
+      md += `> *Referencing: ${contrib.referencesOther}*\n\n`;
+    }
+  }
+
+  md += `---
+
+## Consensus
+
+**Reached:** ${meeting.consensusReached ? '✅ Yes' : '❌ No'}
+
+### Decisions
+${meeting.decisions.map(d => `1. ${d}`).join('\n')}
+
+### Action Items
+${meeting.actionItems.map(a => `- [ ] ${a}`).join('\n')}
+
+### Concerns Raised
+${meeting.concernsRaised.length > 0 ? meeting.concernsRaised.map(c => `- ⚠️ ${c}`).join('\n') : 'None'}
+
+---
+
+## Implementation Plan
+
+${meeting.implementationPlan}
+
+---
+
+*Meeting generated by Expert Debate Gauntlet System*
+`;
+  
+  return md;
+}
+
+async function extractContext(
+  projectName: string,
+  messages: Array<{role: string, content: string}>,
+  currentFiles: string[]
+): Promise<DevContext> {
+  const zai = await ZAI.create();
+  
+  const existingContext = await loadContext(projectName);
+  
+  const prompt = `You are a Context Extraction Agent. Your job is to extract and update the essential development context from a conversation.
+
+${existingContext ? `CURRENT CONTEXT STATE:
+${JSON.stringify(existingContext, null, 2)}
+
+` : ''}RECENT CONVERSATION:
+${messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')}
+
+CURRENT PROJECT FILES:
+${currentFiles.join('\n')}
+
+Extract and return a JSON object with this structure:
+{
+  "projectName": "${projectName}",
+  "version": "increment from existing or start at 1.0",
+  "lastUpdated": timestamp,
+  "projectPurpose": "clear description of what this project does",
+  "targetDomain": "the domain/industry this targets",
+  "currentPhase": "planning|development|testing|deployment|maintenance",
+  "currentTask": "what is being worked on right now",
+  "taskStatus": "not_started|in_progress|blocked|completed",
+  "techStack": ["array", "of", "technologies"],
+  "architectureDecisions": [{"id": "unique", "decision": "what", "rationale": "why", "alternatives": ["what else was considered"], "timestamp": number}],
+  "fileStructure": {"description": "overview", "keyFiles": ["important files"], "patterns": ["patterns used"]},
+  "completedFeatures": ["features done"],
+  "currentFeatures": ["features in progress"],
+  "pendingFeatures": ["features planned"],
+  "knownIssues": ["issues encountered"],
+  "constraints": ["limitations or requirements"],
+  "userPreferences": ["what user prefers based on conversation"],
+  "essentialContext": "A comprehensive summary that would allow a fresh AI session to understand exactly where we are and continue seamlessly. This should be detailed enough that no context is lost but concise enough to avoid token bloat."
+}
+
+Return ONLY valid JSON, no other text.`;
+
+  const completion = await zai.chat.completions.create({
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.3,
+  });
+
+  const responseText = completion.choices[0]?.message?.content || '';
+  
+  try {
+    // Extract JSON from response
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const context = JSON.parse(jsonMatch[0]) as DevContext;
+      context.lastUpdated = Date.now();
+      context.projectName = projectName;
+      return context;
+    }
+  } catch (e) {
+    console.error('Failed to parse context:', e);
+  }
+  
+  // Return default context if extraction fails
+  return {
+    projectName,
+    version: existingContext?.version || '1.0',
+    lastUpdated: Date.now(),
+    projectPurpose: existingContext?.projectPurpose || 'Development project',
+    targetDomain: existingContext?.targetDomain || 'general',
+    currentPhase: existingContext?.currentPhase || 'development',
+    currentTask: existingContext?.currentTask || '',
+    taskStatus: existingContext?.taskStatus || 'in_progress',
+    techStack: existingContext?.techStack || [],
+    architectureDecisions: existingContext?.architectureDecisions || [],
+    fileStructure: existingContext?.fileStructure || { description: '', keyFiles: [], patterns: [] },
+    completedFeatures: existingContext?.completedFeatures || [],
+    currentFeatures: existingContext?.currentFeatures || [],
+    pendingFeatures: existingContext?.pendingFeatures || [],
+    knownIssues: existingContext?.knownIssues || [],
+    constraints: existingContext?.constraints || [],
+    userPreferences: existingContext?.userPreferences || [],
+    essentialContext: existingContext?.essentialContext || ''
+  };
+}
+
+async function generateDebateMeeting(
+  projectName: string,
+  task: string,
+  context: DevContext,
+  version: string
+): Promise<MeetingNote> {
+  const zai = await ZAI.create();
+  
+  const meetingNumber = Math.floor(parseFloat(version) * 1) || 1;
+  
+  // Select relevant experts based on task and domain
+  const relevantExperts = EXPERT_ROLES.slice(0, 6); // Use 6 experts per meeting
+  
+  const prompt = `You are simulating a Debate Gauntlet among expert team members before implementing a development task. Each expert has their own perspective, expertise, and biases.
+
+PROJECT CONTEXT:
+- Name: ${context.projectName}
+- Purpose: ${context.projectPurpose}
+- Domain: ${context.targetDomain}
+- Tech Stack: ${context.techStack.join(', ')}
+- Current Phase: ${context.currentPhase}
+
+CURRENT TASK TO IMPLEMENT:
+${task}
+
+EXISTING CONSTRAINTS:
+${context.constraints.join('\n')}
+
+USER PREFERENCES:
+${context.userPreferences.join('\n')}
+
+EXPERTS IN THIS MEETING:
+${relevantExperts.map(e => `- ${e.role}: Expertise in ${e.expertise.join(', ')}. Perspective: ${e.perspective}. Biases: ${e.biases.join(', ')}`).join('\n')}
+
+Simulate a structured debate where:
+1. Each expert PROPOSES their approach
+2. Others CRITIQUE and REFINE proposals
+3. Experts raise CONCERNS
+4. The team reaches CONSENSUS
+5. Implementation plan is finalized
+
+Return a JSON object:
+{
+  "id": "unique-id",
+  "projectName": "${projectName}",
+  "meetingNumber": ${meetingNumber},
+  "version": "${version}",
+  "createdAt": ${Date.now()},
+  "taskUnderReview": "${task}",
+  "expertsPresent": [array of expert objects],
+  "debateTranscript": [
+    {
+      "expertId": "expert-id",
+      "expertRole": "role name",
+      "contributionType": "proposal|critique|refinement|agreement|concern",
+      "content": "their contribution",
+      "referencesOther": "optional reference to another expert's contribution"
+    }
+  ],
+  "consensusReached": true/false,
+  "decisions": ["final decisions made"],
+  "actionItems": ["what needs to be done"],
+  "concernsRaised": ["concerns that were raised"],
+  "implementationPlan": "detailed plan for implementation",
+  "estimatedComplexity": "low|medium|high|critical"
+}
+
+Make the debate realistic - include disagreements, refinements, and genuine expert perspectives. Each expert should speak 2-4 times. Return ONLY valid JSON.`;
+
+  const completion = await zai.chat.completions.create({
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.7, // Higher temperature for more varied debate
+  });
+
+  const responseText = completion.choices[0]?.message?.content || '';
+  
+  try {
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const meeting = JSON.parse(jsonMatch[0]) as MeetingNote;
+      meeting.id = `meeting-${Date.now()}`;
+      meeting.projectName = projectName;
+      meeting.meetingNumber = meetingNumber;
+      meeting.version = version;
+      meeting.createdAt = Date.now();
+      meeting.taskUnderReview = task;
+      return meeting;
+    }
+  } catch (e) {
+    console.error('Failed to parse meeting:', e);
+  }
+  
+  // Return default meeting if generation fails
+  return {
+    id: `meeting-${Date.now()}`,
+    projectName,
+    meetingNumber,
+    version,
+    createdAt: Date.now(),
+    taskUnderReview: task,
+    expertsPresent: relevantExperts,
+    debateTranscript: [],
+    consensusReached: false,
+    decisions: [],
+    actionItems: [],
+    concernsRaised: ['Failed to generate debate'],
+    implementationPlan: 'Proceed with caution - debate generation failed',
+    estimatedComplexity: 'medium'
+  };
+}
+
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const projectName = searchParams.get('project');
+
+  if (!projectName) {
+    return NextResponse.json({ error: 'Project name required' }, { status: 400 });
+  }
+
+  const context = await loadContext(projectName);
+  
+  return NextResponse.json({
+    success: true,
+    data: context
+  });
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { projectName, messages, currentFiles, generateMeeting } = body;
+
+    if (!projectName) {
+      return NextResponse.json({ error: 'Project name required' }, { status: 400 });
+    }
+
+    // Extract and save context
+    const context = await extractContext(projectName, messages || [], currentFiles || []);
+    await saveContext(projectName, context);
+
+    // Generate debate meeting if requested
+    let meetingNote: MeetingNote | null = null;
+    if (generateMeeting && context.currentTask) {
+      meetingNote = await generateDebateMeeting(
+        projectName,
+        context.currentTask,
+        context,
+        context.version
+      );
+      await saveMeetingNote(projectName, meetingNote);
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        context,
+        meetingNote
+      }
+    });
+  } catch (error) {
+    console.error('Context API error:', error);
+    return NextResponse.json(
+      { error: 'Failed to process context' },
+      { status: 500 }
+    );
+  }
+}

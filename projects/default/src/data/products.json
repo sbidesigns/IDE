@@ -1,0 +1,83 @@
+[
+    {
+        "id": 1,
+        "name": "Classic Butter",
+        "description": "Traditional butter popcorn with perfect salt balance",
+        "price": 8.99,
+        "image": "https://picsum.photos/seed/butter-popcorn/300/250.jpg",
+        "category": "classic",
+        "featured": true
+    },
+    {
+        "id": 2,
+        "name": "Caramel Delight",
+        "description": "Sweet caramel coating with a hint of sea salt",
+        "price": 9.99,
+        "image": "https://picsum.photos/seed/caramel-popcorn/300/250.jpg",
+        "category": "sweet",
+        "featured": true
+    },
+    {
+        "id": 3,
+        "name": "Chocolate Drizzle",
+        "description": "Rich chocolate drizzle over buttery popcorn",
+        "price": 10.99,
+        "image": "https://picsum.photos/seed/chocolate-popcorn/300/250.jpg",
+        "category": "sweet",
+        "featured": true
+    },
+    {
+        "id": 4,
+        "name": "Spicy Jalapeño",
+        "description": "Bold jalapeño flavor with a kick of heat",
+        "price": 9.49,
+        "image": "https://picsum.photos/seed/jalapeno-popcorn/300/250.jpg",
+        "category": "spicy",
+        "featured": false
+    },
+    {
+        "id": 5,
+        "name": "White Cheddar",
+        "description": "Creamy white cheddar cheese coating",
+        "price": 9.79,
+        "image": "https://picsum.photos/seed/cheddar-popcorn/300/250.jpg",
+        "category": "cheese",
+        "featured": true
+    },
+    {
+        "id": 6,
+        "name": "Truffle Garlic",
+        "description": "Luxurious truffle oil with roasted garlic",
+        "price": 12.99,
+        "image": "https://picsum.photos/seed/truffle-popcorn/300/250.jpg",
+        "category": "gourmet",
+        "featured": true
+    },
+    {
+        "id": 7,
+        "name": "Sweet & Salty",
+        "description": "Perfect blend of caramel and sea salt",
+        "price": 8.49,
+        "image": "https://picsum.photos/seed/sweet-salty-popcorn/300/250.jpg",
+        "category": "sweet",
+        "featured": false
+    },
+    {
+        "id": 8,
+        "name": "BBQ Bacon",
+        "description": "Smoky BBQ flavor with crispy bacon bits",
+        "price": 11.49,
+        "image": "https://picsum.photos/seed/bbq-popcorn/300/250.jpg",
+        "category": "savory",
+        "featured": false
+    },
+    {
+        "id": 9,
+        "name": "Mint Chocolate",
+        "description": "Refreshing mint with rich dark chocolate",
+        "price": 10.49,
+        "image": "https://picsum.photos/seed/mint-chocolate-popcorn/300/250.jpg",
+        "category": "sweet",
+        "featured": false
+    }
+]
